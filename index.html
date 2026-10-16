@@ -3918,15 +3918,12 @@ function subjectFinalForStudent(s,type){
   return finalSubject(s[type]);
 }
 function claveOrdenPrimerApellido(nombre){
-  let n=String(nombre||'').replace(/\\s+/g,' ').trim();
+  let n=String(nombre||'').replace(/\s+/g,' ').trim();
   if(!n) return '';
-  // Si el nombre está escrito como "Apellido(s), Nombre(s)", se usa lo anterior a la coma.
-  // En esta libreta los registros suelen estar como "APELLIDO NOMBRE" sin coma,
-  // así que se toma la primera palabra como apellido para ordenar correctamente.
-  const apellidos = n.includes(',') ? n.split(',')[0].trim() : n;
-  const partes = apellidos.split(/\\s+/).filter(Boolean);
-  return (partes[0]||'')
-    .normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();
+  // Si viene "Apellidos, Nombres", se conserva todo el apellido compuesto.
+  // Si no hay coma, se toma la primera palabra como apellido.
+  const apellidos = n.includes(',') ? n.split(',')[0].trim() : (n.split(/\s+/)[0]||'');
+  return apellidos.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 }
 function compararEstudiantesPorPrimerApellido(a,b){
   const ka=claveOrdenPrimerApellido(a.name), kb=claveOrdenPrimerApellido(b.name);
@@ -5716,7 +5713,7 @@ function renderDashboard(){
 function renderStudents(){
   const grado=document.getElementById('studentGrade').value;
   const grupo=document.getElementById('studentGroup').value;
-  const all=state.students.filter(s=>s.grado===grado&&s.grupo===grupo);
+  const all=state.students.filter(s=>s.grado===grado&&s.grupo===grupo).sort(compararEstudiantesPorPrimerApellido);
   document.getElementById('studentCount').textContent=all.length+' estudiantes · '+grado+' '+grupo;
   document.getElementById('studentsTable').innerHTML=all.length?all.map(s=>{actualizarAsignaturasEstudianteV147(s);const as=obtenerAsignaturaVisibleV23();return `<tr><td><input class="name" value="${esc(s.name)}" onchange="renameStudent('${s.id}',this.value)"></td><td>${s.grado}</td><td>${s.grupo}</td><td><span class="subject-chip-v147">${esc(as.icono)} ${esc(as.nombre)}</span></td><td><button class="btn btn-light" onclick="toggleRetired('${s.id}')">${s.retired?'Reingresar':'Marcar retirado'}</button> <button class="btn btn-danger" onclick="removeStudent('${s.id}')">Eliminar</button></td></tr>`}).join(''):`<tr><td colspan="5" class="empty">No hay estudiantes en ${grado} ${grupo}.</td></tr>`;
   document.getElementById('studentName').value='';
@@ -5775,7 +5772,7 @@ function addStudent(){
     return;
   }
 
-  const groupCount=state.students.filter(s=>s.grado===grado&&s.grupo===grupo).length;
+  const groupCount=state.students.filter(s=>s.grado===grado&&s.grupo===grupo&&!s.retired).length;
   if(groupCount>=MAX){
     alert(`Se alcanzó el máximo de ${MAX} estudiantes en ${grado} ${grupo}.`);
     return;
@@ -5785,7 +5782,7 @@ function addStudent(){
   const nombreNormalizado=normalizarNombre(n);
 
   const duplicado=state.students.some(s =>
-    normalizarNombre(s.name)===nombreNormalizado &&
+    !s.retired && normalizarNombre(s.name)===nombreNormalizado &&
     s.grado===grado &&
     s.grupo===grupo
   );
@@ -5819,7 +5816,23 @@ function addDemo(){
   });
   saveState();renderAll();
 }
-function removeStudent(id){if(confirm('¿Eliminar este estudiante?')){state.students=state.students.filter(s=>s.id!==id);saveState();renderAll()}}
+function removeStudent(id){
+  const estudiante=state.students.find(s=>s.id===id);
+  if(!estudiante)return;
+  if(!confirm(`¿Eliminar definitivamente a ${estudiante.name} de ${estudiante.grado} ${estudiante.grupo}?\n\nTambién se quitará de los archivos guardados de los trimestres para que no reaparezca al cambiar de trimestre.`))return;
+  state.students=state.students.filter(s=>s.id!==id);
+  // Evita que una copia histórica del roster vuelva a insertar al estudiante.
+  const archivo=obtenerArchivoTrimestres();
+  ['I','II','III'].forEach(t=>{
+    if(archivo[t]&&Array.isArray(archivo[t].estudiantes)){
+      archivo[t].estudiantes=archivo[t].estudiantes.filter(s=>s.id!==id && !(s.grado===estudiante.grado&&s.grupo===estudiante.grupo&&normalizarNombre(s.name)===normalizarNombre(estudiante.name)));
+    }
+  });
+  guardarArchivoTrimestres(archivo);
+  saveState();
+  renderAll();
+  toast('Estudiante eliminado del grupo y de los trimestres guardados.');
+}
 function toggleRetired(id){
   const s=state.students.find(x=>x.id===id); if(!s)return;
   s.retired=!s.retired; saveState(); renderAll();
@@ -5989,7 +6002,7 @@ function agregarEstudiantesSinBorrar(){
   state.students.sort((a,b)=>{
     if(a.grado!==b.grado) return String(a.grado).localeCompare(String(b.grado),'es');
     if(a.grupo!==b.grupo) return String(a.grupo).localeCompare(String(b.grupo),'es');
-    return String(a.name||'').localeCompare(String(b.name||''),'es',{sensitivity:'base'});
+    return compararEstudiantesPorPrimerApellido(a,b);
   });
 
   saveState();
